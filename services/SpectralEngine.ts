@@ -202,30 +202,22 @@ class SpectralEngine {
     if (!articles || articles.length === 0) return "The void is silent tonight.";
 
     let selected: WikiArticle[] = [];
-
-    // 1. Try heading-based search
     if (heading !== undefined) {
       selected = this.findArticlesAlongHeading(articles, coords, heading);
     }
 
-    // 2. Fallback: If no articles in the cone, pick the closest ones
     if (selected.length < 2) {
       const sortedByDist = [...articles].sort((a, b) => {
         const dA = this.calculateDistance(coords, { lat: a.lat!, lng: a.lng! });
         const dB = this.calculateDistance(coords, { lat: b.lat!, lng: b.lng! });
         return dA - dB;
       });
-
-      // Fill selected with unique entries from the sorted distance list
       for (const item of sortedByDist) {
         if (selected.length >= 2) break;
-        if (!selected.find(s => s.title === item.title)) {
-          selected.push(item);
-        }
+        if (!selected.find(s => s.title === item.title)) selected.push(item);
       }
     }
 
-    // Safety check if we only have 1 article in total nearby
     if (selected.length === 1) {
       return `The ghost of ${selected[0].title.split(/[,(]/)[0]} persists here. Alone.`;
     }
@@ -256,15 +248,14 @@ class SpectralEngine {
     return result.charAt(0).toUpperCase() + result.slice(1);
   }
 
-  async generateWhisperStreaming(articles: WikiArticle[], coords: GeoPoint, onToken: (t: string, acc: string) => void, heading?: number): Promise<string> {
-    const res = await this.generateWhisper(articles, coords, heading);
+  // CHANGE: Now accepts 'text' as the first argument
+  async streamText(text: string, onToken: (t: string, acc: string) => void): Promise<void> {
     let acc = "";
-    for (const char of res) {
+    for (const char of text) {
       acc += char;
       onToken(char, acc);
       await new Promise(r => setTimeout(r, 40 + Math.random() * 30));
     }
-    return res;
   }
 }
 
