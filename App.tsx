@@ -182,7 +182,7 @@ const App: React.FC = () => {
         ) : state === DriftState.INITIALIZING ? (
           <div className="w-64 space-y-6">
              <div className="flex justify-between font-mono text-[10px] text-green-500/80 uppercase tracking-widest">
-                <span>Downloading Local AI</span>
+                <span>Necromantic Interface Loading</span>
                 <span>{loadProgress}%</span>
              </div>
              <div className="h-1 w-full bg-green-950/40 border border-green-500/10 rounded-full relative overflow-hidden">
