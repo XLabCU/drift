@@ -22,6 +22,7 @@ const App: React.FC = () => {
   const lastDriftCoords = useRef<GeoPoint | null>(null);
   const isGeneratingRef = useRef(false);
 
+  // Distance threshold to trigger a new ghost scan (approx 15-20 meters)
   const DRIFT_THRESHOLD_METERS = 0.00015;
 
   const requestOrientationPermission = async () => {
@@ -41,6 +42,7 @@ const App: React.FC = () => {
     setState(DriftState.INITIALIZING);
     setError(null);
 
+    // Browser security: Audio and Orientation require a user gesture
     await requestOrientationPermission();
     
     if ("geolocation" in navigator) {
@@ -50,13 +52,13 @@ const App: React.FC = () => {
           setCoords(newCoords);
         },
         (err) => {
-          setError(`Dimensional anchoring failed: ${err.message}`);
+          setError(`Signal Lost: ${err.message}`);
           setState(DriftState.ERROR);
         },
         { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
       );
     } else {
-      setError("Geospatial sensors unavailable on this hardware.");
+      setError("Geospatial sensors unavailable.");
       setState(DriftState.ERROR);
       return;
     }
@@ -70,10 +72,11 @@ const App: React.FC = () => {
     window.addEventListener('deviceorientation', handleOrientation);
 
     try {
+      // Initialize Engines
       await audioEngine.init();
       await spectralEngine.init((p) => setLoadProgress(p));
     } catch (e: any) {
-      setError(`Core Initialization Failure: ${e.message}. Note: Local AI requires a stable connection for the first-time setup.`);
+      setError(`Core Initialization Failure: ${e.message}`);
       setState(DriftState.ERROR);
     }
   };
@@ -87,12 +90,20 @@ const App: React.FC = () => {
       const nearby = await fetchNearbyArticles(currentCoords, DRIFT_RADIUS_METERS);
       setArticles(nearby);
 
-      if (nearby.length >= 1) {
+      if (nearby.length >= 2) {
         setIsTransmitting(true);
         setStreamingText('');
+        
+        // 1. Instant Audio Ping
         audioEngine.playSonarPing();
         
-        // Stream the whisper text token by token
+        // 2. Generate the base text immediately so we can start the voice
+        const baseText = await spectralEngine.generateWhisper(nearby, currentCoords, currentHeading);
+        
+        // 3. Start speaking immediately
+        audioEngine.speak(baseText);
+        
+        // 4. Run visual stream (this mimics the speed of the voice)
         const finalText = await spectralEngine.generateWhisperStreaming(
           nearby,
           currentCoords,
@@ -108,16 +119,18 @@ const App: React.FC = () => {
           text: finalText,
           coords: currentCoords,
           anchors: nearby.slice(0, 3).map(a => a.title),
-          voice: "Local-OpenELM"
+          voice: "Spectral-NLP"
         };
 
         setLog(prev => [newEntry, ...prev]);
-        await audioEngine.speak(finalText);
         
         setTimeout(() => {
           setIsTransmitting(false);
           setStreamingText('');
-        }, 2000);
+        }, 3000);
+      } else {
+         // Not enough articles nearby to generate a blend
+         setState(DriftState.SCANNING);
       }
     } catch (err) {
       console.error("Drift collapse:", err);
@@ -128,6 +141,7 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // Transition from Init to Scanning
     if (state === DriftState.INITIALIZING && loadProgress >= 100 && coords) {
       setState(DriftState.SCANNING);
       performDrift(coords, heading);
@@ -135,6 +149,7 @@ const App: React.FC = () => {
       return;
     }
 
+    // Trigger drift on movement
     if (state === DriftState.SCANNING && coords) {
       const last = lastDriftCoords.current;
       if (!last) {
@@ -155,19 +170,20 @@ const App: React.FC = () => {
 
   return (
     <div className={`h-screen w-full flex flex-col md:flex-row bg-[#050505] text-[#d1d1d1] transition-all duration-1000 ${isTransmitting ? 'bg-[#1a0a0a]' : ''}`}>
+      
+      {/* LEFT COLUMN: RADAR & INTERFACE */}
       <div className={`w-full md:w-1/2 flex flex-col items-center justify-center p-8 border-b md:border-b-0 md:border-r border-green-900/20 bg-black/50 relative overflow-hidden`}>
         
         {isTransmitting && (
           <div className="absolute inset-0 z-50 pointer-events-none bg-red-500/10 animate-pulse flex flex-col items-center justify-center gap-4 px-8">
-             <div className="text-red-500 font-mono text-2xl tracking-[0.5em] uppercase animate-ping blur-[1px]">Receiving</div>
-             <div className="text-[10px] font-mono text-red-500/80 font-bold uppercase tracking-[0.5em]">Local Spectral Intercept</div>
+             <div className="text-red-500 font-mono text-2xl tracking-[0.5em] uppercase animate-ping blur-[1px]">Intercepting</div>
+             <div className="text-[10px] font-mono text-red-500/80 font-bold uppercase tracking-[0.5em]">Radio Frequency Identified</div>
              
-             {/* Streaming text display */}
              {streamingText && (
                <div className="mt-6 max-w-md text-center">
-                 <p className="text-red-400/90 font-serif text-lg italic leading-relaxed tracking-wide">
+                 <p className="text-red-400/90 font-serif text-xl italic leading-relaxed tracking-wide drop-shadow-[0_0_10px_rgba(255,0,0,0.5)]">
                    "{streamingText}
-                   <span className="inline-block w-2 h-4 bg-red-500 ml-1 animate-pulse" />
+                   <span className="inline-block w-2 h-5 bg-red-500 ml-1 animate-pulse" />
                    "
                  </p>
                </div>
@@ -175,6 +191,7 @@ const App: React.FC = () => {
           </div>
         )}
 
+        {/* HUD Stats */}
         <div className="absolute top-6 left-6 font-mono text-[10px] text-green-500/40 flex flex-col gap-2 uppercase tracking-widest">
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${coords ? 'bg-green-500 shadow-[0_0_8px_green]' : 'bg-red-900 animate-pulse'}`} />
@@ -182,7 +199,7 @@ const App: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${loadProgress >= 100 ? 'bg-green-500' : 'bg-yellow-600 animate-pulse'}`} />
-            <span>Matrix: {loadProgress >= 100 ? 'LOCALIZED' : `DOWNLOADING ${loadProgress}%`}</span>
+            <span>Matrix: {loadProgress >= 100 ? 'PROCEDURAL' : `ALIGNED ${loadProgress}%`}</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-green-500/50" />
@@ -201,14 +218,14 @@ const App: React.FC = () => {
               onClick={startEngine}
               className="group relative px-10 py-5 overflow-hidden border border-green-500/50 text-green-500 hover:bg-green-500 hover:text-black transition-all duration-700 font-mono tracking-[0.4em] uppercase text-xs"
             >
-              <span className="relative z-10">Wake Local Core</span>
+              <span className="relative z-10">Wake Spectral Core</span>
               <div className="absolute inset-0 bg-green-500 transform translate-y-full group-hover:translate-y-0 transition-transform duration-500"></div>
             </button>
           </div>
         ) : state === DriftState.INITIALIZING ? (
           <div className="w-64 space-y-6">
              <div className="flex justify-between font-mono text-[10px] text-green-500/80 uppercase tracking-widest">
-                <span>Necromantic Interface Loading</span>
+                <span>Aligning Linguistic Matrix</span>
                 <span>{loadProgress}%</span>
              </div>
              <div className="h-1 w-full bg-green-950/40 border border-green-500/10 rounded-full relative overflow-hidden">
@@ -218,7 +235,7 @@ const App: React.FC = () => {
                 />
              </div>
              <p className="text-[10px] text-center font-serif italic opacity-30 tracking-wide">
-               Anchoring 270M parameters for offline spectral intercept.
+               Calibrating procedural templates for spatial intercept.
              </p>
           </div>
         ) : (
@@ -227,7 +244,7 @@ const App: React.FC = () => {
             
             <div className="text-center space-y-6">
               <div className="text-[11px] font-mono uppercase tracking-[0.6em] text-green-500/70 animate-pulse">
-                {isTransmitting ? "DECODING ECHO..." : "WATCHING THE VOID"}
+                {isTransmitting ? "SIGNAL DRIFT..." : "SCANNING THE ETHER"}
               </div>
               <div className="flex justify-center gap-3 h-8 items-center">
                 {[...Array(8)].map((_, i) => (
@@ -245,11 +262,12 @@ const App: React.FC = () => {
         {error && (
           <div className="mt-10 p-6 bg-red-950/20 border border-red-900/40 text-red-500 text-[10px] font-mono text-center uppercase tracking-[0.2em] leading-relaxed max-w-sm">
             {error}
-            <button onClick={() => window.location.reload()} className="block mt-6 mx-auto border border-red-500/40 px-4 py-2 hover:bg-red-500/10 transition-all font-bold">REBOOT CORE</button>
+            <button onClick={() => window.location.reload()} className="block mt-6 mx-auto border border-red-500/40 px-4 py-2 hover:bg-red-500/10 transition-all font-bold">REBOOT INTERFACE</button>
           </div>
         )}
       </div>
 
+      {/* RIGHT COLUMN: HISTORY LOG */}
       <div className="w-full md:w-1/2 flex flex-col bg-[#070707] relative overflow-hidden border-t md:border-t-0 border-green-900/10">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,rgba(0,255,65,0.02)_0%,transparent_50%)] pointer-events-none" />
         <Log entries={log} />
