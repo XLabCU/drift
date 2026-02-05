@@ -81,64 +81,57 @@ const App: React.FC = () => {
     }
   };
 
-  const performDrift = useCallback(async (currentCoords: GeoPoint, currentHeading: number) => {
-    if (isGeneratingRef.current) return;
-    isGeneratingRef.current = true;
-    setState(DriftState.DRIFTING);
+const performDrift = useCallback(async (currentCoords: GeoPoint, currentHeading: number) => {
+  if (isGeneratingRef.current) return;
+  isGeneratingRef.current = true;
+  setState(DriftState.DRIFTING);
 
-    try {
-      const nearby = await fetchNearbyArticles(currentCoords, DRIFT_RADIUS_METERS);
-      setArticles(nearby);
+  try {
+    const nearby = await fetchNearbyArticles(currentCoords, DRIFT_RADIUS_METERS);
+    setArticles(nearby);
 
-      if (nearby.length >= 2) {
-        setIsTransmitting(true);
+    if (nearby.length >= 1) {
+      setIsTransmitting(true);
+      setStreamingText('');
+      
+      // 1. Play the sonar sound
+      audioEngine.playSonarPing();
+      
+      // 2. GENERATE THE WHISPER ONCE
+      const whisper = await spectralEngine.generateWhisper(nearby, currentCoords, currentHeading);
+      
+      // 3. SEND TO VOICE ENGINE IMMEDIATELY
+      audioEngine.speak(whisper);
+      
+      // 4. SEND THE SAME STRING TO THE UI STREAMER
+      await spectralEngine.streamText(whisper, (_token, accumulated) => {
+        setStreamingText(accumulated);
+      });
+      
+      // 5. Log the entry
+      const newEntry: DriftEntry = {
+        id: generateId(),
+        timestamp: Date.now(),
+        text: whisper,
+        coords: currentCoords,
+        anchors: nearby.slice(0, 3).map(a => a.title),
+        voice: "Spectral-NLP"
+      };
+
+      setLog(prev => [newEntry, ...prev]);
+      
+      setTimeout(() => {
+        setIsTransmitting(false);
         setStreamingText('');
-        
-        // 1. Instant Audio Ping
-        audioEngine.playSonarPing();
-        
-        // 2. Generate the base text immediately so we can start the voice
-        const baseText = await spectralEngine.generateWhisper(nearby, currentCoords, currentHeading);
-        
-        // 3. Start speaking immediately
-        audioEngine.speak(baseText);
-        
-        // 4. Run visual stream (this mimics the speed of the voice)
-        const finalText = await spectralEngine.generateWhisperStreaming(
-          nearby,
-          currentCoords,
-          (_token, accumulated) => {
-            setStreamingText(accumulated);
-          },
-          currentHeading
-        );
-        
-        const newEntry: DriftEntry = {
-          id: generateId(),
-          timestamp: Date.now(),
-          text: finalText,
-          coords: currentCoords,
-          anchors: nearby.slice(0, 3).map(a => a.title),
-          voice: "Spectral-NLP"
-        };
-
-        setLog(prev => [newEntry, ...prev]);
-        
-        setTimeout(() => {
-          setIsTransmitting(false);
-          setStreamingText('');
-        }, 3000);
-      } else {
-         // Not enough articles nearby to generate a blend
-         setState(DriftState.SCANNING);
-      }
-    } catch (err) {
-      console.error("Drift collapse:", err);
-    } finally {
-      isGeneratingRef.current = false;
-      setState(DriftState.SCANNING);
+      }, 3000);
     }
-  }, []);
+  } catch (err) {
+    console.error("Drift collapse:", err);
+  } finally {
+    isGeneratingRef.current = false;
+    setState(DriftState.SCANNING);
+  }
+}, []);
 
   useEffect(() => {
     // Transition from Init to Scanning
