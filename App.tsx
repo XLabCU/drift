@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { GoogleGenAI } from "@google/genai";
 import { DriftState, WikiArticle, GeoPoint, DriftEntry } from './types.ts';
 import { DRIFT_RADIUS_METERS } from './constants.ts';
 import { fetchNearbyArticles } from './services/WikipediaService.ts';
@@ -26,7 +25,6 @@ const App: React.FC = () => {
   const DRIFT_THRESHOLD_METERS = 0.00015;
 
   const requestOrientationPermission = async () => {
-    // For iOS 13+ devices
     if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
       try {
         const permissionState = await (DeviceOrientationEvent as any).requestPermission();
@@ -36,14 +34,14 @@ const App: React.FC = () => {
         return false;
       }
     }
-    return true; // Non-iOS or older devices
+    return true; 
   };
 
   const startEngine = async () => {
     setState(DriftState.INITIALIZING);
     setError(null);
 
-    const hasOrientation = await requestOrientationPermission();
+    await requestOrientationPermission();
     
     if ("geolocation" in navigator) {
       navigator.geolocation.watchPosition(
@@ -63,7 +61,6 @@ const App: React.FC = () => {
       return;
     }
 
-    // Orientation handling
     const handleOrientation = (e: DeviceOrientationEvent) => {
       if (e.alpha !== null) {
         const compassHeading = (e as any).webkitCompassHeading || (360 - e.alpha);
@@ -74,9 +71,10 @@ const App: React.FC = () => {
 
     try {
       await audioEngine.init();
+      // This will download ~270MB of model weights locally
       await spectralEngine.init((p) => setLoadProgress(p));
     } catch (e: any) {
-      setError(`Core Initialization Failure: ${e.message}`);
+      setError(`Core Initialization Failure: ${e.message}. Note: Local AI requires a stable connection for the first-time setup.`);
       setState(DriftState.ERROR);
     }
   };
@@ -102,7 +100,7 @@ const App: React.FC = () => {
           text: whisperText,
           coords: currentCoords,
           anchors: nearby.slice(0, 3).map(a => a.title),
-          voice: "Spectral-Flash"
+          voice: "Local-OpenELM"
         };
 
         setLog(prev => [newEntry, ...prev]);
@@ -151,7 +149,7 @@ const App: React.FC = () => {
         {isTransmitting && (
           <div className="absolute inset-0 z-50 pointer-events-none bg-red-500/10 animate-pulse flex flex-col items-center justify-center gap-4">
              <div className="text-red-500 font-mono text-3xl tracking-[1em] uppercase animate-ping blur-[1px]">Receiving</div>
-             <div className="text-[10px] font-mono text-red-500/80 font-bold uppercase tracking-[0.5em]">Inter-Dimensional Uplink</div>
+             <div className="text-[10px] font-mono text-red-500/80 font-bold uppercase tracking-[0.5em]">Local Spectral Intercept</div>
           </div>
         )}
 
@@ -162,7 +160,7 @@ const App: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${loadProgress >= 100 ? 'bg-green-500' : 'bg-yellow-600 animate-pulse'}`} />
-            <span>Matrix: {loadProgress >= 100 ? 'ACTIVE' : `SYNCING ${loadProgress}%`}</span>
+            <span>Matrix: {loadProgress >= 100 ? 'LOCALIZED' : `DOWNLOADING ${loadProgress}%`}</span>
           </div>
         </div>
 
@@ -177,14 +175,14 @@ const App: React.FC = () => {
               onClick={startEngine}
               className="group relative px-10 py-5 overflow-hidden border border-green-500/50 text-green-500 hover:bg-green-500 hover:text-black transition-all duration-700 font-mono tracking-[0.4em] uppercase text-xs"
             >
-              <span className="relative z-10">Wake Spectral Core</span>
+              <span className="relative z-10">Wake Local Core</span>
               <div className="absolute inset-0 bg-green-500 transform translate-y-full group-hover:translate-y-0 transition-transform duration-500"></div>
             </button>
           </div>
         ) : state === DriftState.INITIALIZING ? (
           <div className="w-64 space-y-6">
              <div className="flex justify-between font-mono text-[10px] text-green-500/80 uppercase tracking-widest">
-                <span>Stabilizing Neural Lattice</span>
+                <span>Downloading Local AI</span>
                 <span>{loadProgress}%</span>
              </div>
              <div className="h-1 w-full bg-green-950/40 border border-green-500/10 rounded-full relative overflow-hidden">
@@ -194,7 +192,7 @@ const App: React.FC = () => {
                 />
              </div>
              <p className="text-[10px] text-center font-serif italic opacity-30 tracking-wide">
-               Ensuring correct calibration of spatial sensors and spectral relays.
+               Anchoring 270M parameters for offline spectral intercept.
              </p>
           </div>
         ) : (
@@ -203,7 +201,7 @@ const App: React.FC = () => {
             
             <div className="text-center space-y-6">
               <div className="text-[11px] font-mono uppercase tracking-[0.6em] text-green-500/70 animate-pulse">
-                {isTransmitting ? "INTERCEPTING ECHO..." : "WATCHING THE VOID"}
+                {isTransmitting ? "DECODING ECHO..." : "WATCHING THE VOID"}
               </div>
               <div className="flex justify-center gap-3 h-8 items-center">
                 {[...Array(8)].map((_, i) => (
