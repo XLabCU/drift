@@ -6,7 +6,7 @@ interface ArticleWithBearing extends WikiArticle {
   bearingDelta: number;
 }
 
-export class SpectralEngine {
+class SpectralEngine {
   private ready = false;
 
   private ABSTRACTS = [
@@ -111,8 +111,11 @@ export class SpectralEngine {
   ];
 
   async init(onProgress?: (progress: number) => void) {
+    onProgress?.(50);
+    await new Promise(r => setTimeout(r, 100));
     onProgress?.(100);
     this.ready = true;
+    console.log('[SpectralEngine] Matrix Aligned.');
   }
 
   // ============ GEO UTILITIES ============
@@ -149,47 +152,107 @@ export class SpectralEngine {
         };
       })
       .filter(a => (a as any).bearingDelta <= 60)
-      .sort((a, b) => (a as any).distance - (b as any).distance)
-      .slice(0, 2);
+      .sort((a, b) => (a as any).distance - (b as any).distance);
   }
 
-  // ============ NLP ============
+  // ============ NLP UTILS ============
 
   private tokenize(text: string): string[] {
     return text.toLowerCase().replace(/[^\w\s'-]/g, ' ').split(/\s+/).filter(w => w.length > 2);
   }
 
   private extractNouns(text: string): string[] {
-    const stopwords = new Set(['the', 'and', 'was', 'were', 'been', 'with', 'from', 'that', 'which', 'their', 'this']);
+    const stopwords = new Set(['the', 'and', 'was', 'were', 'been', 'with', 'from', 'that', 'which', 'their', 'this', 'into', 'they', 'those']);
     return this.tokenize(text).filter(w => w.length > 4 && !stopwords.has(w));
+  }
+
+  private markovBlend(textA: string, textB: string): string {
+    const wordsA = this.tokenize(textA);
+    const wordsB = this.tokenize(textB);
+    const map = new Map<string, string[]>();
+    const allWords = [...wordsA, ...wordsB];
+
+    for (let i = 0; i < allWords.length - 1; i++) {
+      const list = map.get(allWords[i]) || [];
+      list.push(allWords[i + 1]);
+      map.set(allWords[i], list);
+    }
+
+    const common = wordsA.filter(w => wordsB.includes(w));
+    let cur = common.length ? common[Math.floor(Math.random() * common.length)] : wordsA[0];
+    const res = [cur];
+
+    for (let i = 0; i < 8; i++) {
+      const nexts = map.get(cur);
+      if (!nexts) break;
+      cur = nexts[Math.floor(Math.random() * nexts.length)];
+      res.push(cur);
+    }
+    return res.join(' ');
+  }
+
+  private cutUp(textA: string, textB: string): string {
+    const chunk = (t: string) => t.split(/\s+/).slice(0, 20).sort(() => Math.random() - 0.5).slice(0, 3).join(' ');
+    return `${chunk(textA)} — ${chunk(textB)} — ${this.ABSTRACTS[Math.floor(Math.random() * this.ABSTRACTS.length)]}`;
   }
 
   // ============ GENERATION ============
 
   async generateWhisper(articles: WikiArticle[], coords: GeoPoint, heading?: number): Promise<string> {
-    const selected = (heading !== undefined && articles.length >= 2) 
-      ? this.findArticlesAlongHeading(articles, coords, heading) 
-      : articles.sort(() => 0.5 - Math.random()).slice(0, 2);
+    if (!articles || articles.length === 0) return "The void is silent tonight.";
 
-    if (selected.length === 0) return "The void is silent tonight.";
-    if (selected.length === 1) return `The ghost of ${selected[0].title} persists alone.`;
+    let selected: WikiArticle[] = [];
+
+    // 1. Try heading-based search
+    if (heading !== undefined) {
+      selected = this.findArticlesAlongHeading(articles, coords, heading);
+    }
+
+    // 2. Fallback: If no articles in the cone, pick the closest ones
+    if (selected.length < 2) {
+      const sortedByDist = [...articles].sort((a, b) => {
+        const dA = this.calculateDistance(coords, { lat: a.lat!, lng: a.lng! });
+        const dB = this.calculateDistance(coords, { lat: b.lat!, lng: b.lng! });
+        return dA - dB;
+      });
+
+      // Fill selected with unique entries from the sorted distance list
+      for (const item of sortedByDist) {
+        if (selected.length >= 2) break;
+        if (!selected.find(s => s.title === item.title)) {
+          selected.push(item);
+        }
+      }
+    }
+
+    // Safety check if we only have 1 article in total nearby
+    if (selected.length === 1) {
+      return `The ghost of ${selected[0].title.split(/[,(]/)[0]} persists here. Alone.`;
+    }
 
     const [a, b] = selected;
-    const nounsA = this.extractNouns(a.extract || a.title);
-    const nounsB = this.extractNouns(b.extract || b.title);
-    
-    const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
-    const template = pick(this.TEMPLATES);
-    
-    const result = template
-      .replace('{A}', a.title.split(/[,(]/)[0].trim())
-      .replace('{B}', b.title.split(/[,(]/)[0].trim())
-      .replace('{nounA}', pick(nounsA) || 'stone')
-      .replace('{nounB}', pick(nounsB) || 'echo')
-      .replace('{verbA}', pick(this.VERBS))
-      .replace('{verbB}', pick(this.VERBS))
-      .replace('{abstract}', pick(this.ABSTRACTS));
+    const textA = a.extract || a.title;
+    const textB = b.extract || b.title;
 
+    const techniques = [
+      () => {
+        const nA = this.extractNouns(textA);
+        const nB = this.extractNouns(textB);
+        const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
+        return pick(this.TEMPLATES)
+          .replace('{A}', a.title.split(/[,(]/)[0].trim())
+          .replace('{B}', b.title.split(/[,(]/)[0].trim())
+          .replace('{nounA}', pick(nA) || 'stone')
+          .replace('{nounB}', pick(nB) || 'echo')
+          .replace('{verbA}', pick(this.VERBS))
+          .replace('{verbB}', pick(this.VERBS))
+          .replace('{abstract}', pick(this.ABSTRACTS));
+      },
+      () => this.markovBlend(textA, textB),
+      () => this.cutUp(textA, textB)
+    ];
+
+    const result = techniques[Math.floor(Math.random() * techniques.length)]();
     return result.charAt(0).toUpperCase() + result.slice(1);
   }
 
