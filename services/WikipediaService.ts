@@ -2,7 +2,7 @@
 import { WikiArticle, GeoPoint } from '../types';
 import { WIKI_API_ENDPOINT } from '../constants';
 
-export const fetchNearbyArticles = async (coords: GeoPoint, radius: number = 5000): Promise<WikiArticle[]> => {
+export const fetchNearbyArticles = async (coords: GeoPoint, radius: number = 2000): Promise<WikiArticle[]> => {
   const params = new URLSearchParams({
     action: 'query',
     list: 'geosearch',
