@@ -185,7 +185,7 @@ FRAGMENT A - "${article1.title}":
 FRAGMENT B - "${article2.title}":
 "${snippet2}"
 
-Task: Write ONE haunting sentence (max 15 words) that mysteriously connects these two fragments. Be cryptic and poetic. Reference both obliquely.
+Task: These two fragments combine in your fever dreams, a message from an eldritch dimension waiting to be born. Write ONE haunting sentence (max 15 words) that result. Be cryptic and poetic.
 <|assistant|>
 `;
 
