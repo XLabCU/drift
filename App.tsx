@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { DriftState, WikiArticle, GeoPoint, DriftEntry } from './types.ts';
 import { DRIFT_RADIUS_METERS } from './constants.ts';
@@ -18,6 +17,7 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isTransmitting, setIsTransmitting] = useState(false);
   const [loadProgress, setLoadProgress] = useState(0);
+  const [streamingText, setStreamingText] = useState<string>('');
   
   const lastDriftCoords = useRef<GeoPoint | null>(null);
   const isGeneratingRef = useRef(false);
@@ -71,7 +71,6 @@ const App: React.FC = () => {
 
     try {
       await audioEngine.init();
-      // This will download ~270MB of model weights locally
       await spectralEngine.init((p) => setLoadProgress(p));
     } catch (e: any) {
       setError(`Core Initialization Failure: ${e.message}. Note: Local AI requires a stable connection for the first-time setup.`);
@@ -79,7 +78,7 @@ const App: React.FC = () => {
     }
   };
 
-  const performDrift = useCallback(async (currentCoords: GeoPoint) => {
+  const performDrift = useCallback(async (currentCoords: GeoPoint, currentHeading: number) => {
     if (isGeneratingRef.current) return;
     isGeneratingRef.current = true;
     setState(DriftState.DRIFTING);
@@ -90,23 +89,35 @@ const App: React.FC = () => {
 
       if (nearby.length >= 1) {
         setIsTransmitting(true);
+        setStreamingText('');
         audioEngine.playSonarPing();
         
-        const whisperText = await spectralEngine.generateWhisper(nearby, currentCoords);
+        // Stream the whisper text token by token
+        const finalText = await spectralEngine.generateWhisperStreaming(
+          nearby,
+          currentCoords,
+          (_token, accumulated) => {
+            setStreamingText(accumulated);
+          },
+          currentHeading
+        );
         
         const newEntry: DriftEntry = {
           id: generateId(),
           timestamp: Date.now(),
-          text: whisperText,
+          text: finalText,
           coords: currentCoords,
           anchors: nearby.slice(0, 3).map(a => a.title),
           voice: "Local-OpenELM"
         };
 
         setLog(prev => [newEntry, ...prev]);
-        await audioEngine.speak(whisperText);
+        await audioEngine.speak(finalText);
         
-        setTimeout(() => setIsTransmitting(false), 5000);
+        setTimeout(() => {
+          setIsTransmitting(false);
+          setStreamingText('');
+        }, 2000);
       }
     } catch (err) {
       console.error("Drift collapse:", err);
@@ -119,7 +130,7 @@ const App: React.FC = () => {
   useEffect(() => {
     if (state === DriftState.INITIALIZING && loadProgress >= 100 && coords) {
       setState(DriftState.SCANNING);
-      performDrift(coords);
+      performDrift(coords, heading);
       lastDriftCoords.current = coords;
       return;
     }
@@ -127,7 +138,7 @@ const App: React.FC = () => {
     if (state === DriftState.SCANNING && coords) {
       const last = lastDriftCoords.current;
       if (!last) {
-        performDrift(coords);
+        performDrift(coords, heading);
         lastDriftCoords.current = coords;
         return;
       }
@@ -136,20 +147,31 @@ const App: React.FC = () => {
       const distLng = Math.abs(coords.lng - last.lng);
       
       if (distLat > DRIFT_THRESHOLD_METERS || distLng > DRIFT_THRESHOLD_METERS) {
-        performDrift(coords);
+        performDrift(coords, heading);
         lastDriftCoords.current = coords;
       }
     }
-  }, [coords, state, loadProgress, performDrift]);
+  }, [coords, state, loadProgress, heading, performDrift]);
 
   return (
     <div className={`h-screen w-full flex flex-col md:flex-row bg-[#050505] text-[#d1d1d1] transition-all duration-1000 ${isTransmitting ? 'bg-[#1a0a0a]' : ''}`}>
       <div className={`w-full md:w-1/2 flex flex-col items-center justify-center p-8 border-b md:border-b-0 md:border-r border-green-900/20 bg-black/50 relative overflow-hidden`}>
         
         {isTransmitting && (
-          <div className="absolute inset-0 z-50 pointer-events-none bg-red-500/10 animate-pulse flex flex-col items-center justify-center gap-4">
-             <div className="text-red-500 font-mono text-3xl tracking-[1em] uppercase animate-ping blur-[1px]">Receiving</div>
+          <div className="absolute inset-0 z-50 pointer-events-none bg-red-500/10 animate-pulse flex flex-col items-center justify-center gap-4 px-8">
+             <div className="text-red-500 font-mono text-2xl tracking-[0.5em] uppercase animate-ping blur-[1px]">Receiving</div>
              <div className="text-[10px] font-mono text-red-500/80 font-bold uppercase tracking-[0.5em]">Local Spectral Intercept</div>
+             
+             {/* Streaming text display */}
+             {streamingText && (
+               <div className="mt-6 max-w-md text-center">
+                 <p className="text-red-400/90 font-serif text-lg italic leading-relaxed tracking-wide">
+                   "{streamingText}
+                   <span className="inline-block w-2 h-4 bg-red-500 ml-1 animate-pulse" />
+                   "
+                 </p>
+               </div>
+             )}
           </div>
         )}
 
@@ -161,6 +183,10 @@ const App: React.FC = () => {
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${loadProgress >= 100 ? 'bg-green-500' : 'bg-yellow-600 animate-pulse'}`} />
             <span>Matrix: {loadProgress >= 100 ? 'LOCALIZED' : `DOWNLOADING ${loadProgress}%`}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-green-500/50" />
+            <span>Heading: {Math.round(heading)}°</span>
           </div>
         </div>
 
