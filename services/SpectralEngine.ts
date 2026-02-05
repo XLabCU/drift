@@ -14,7 +14,7 @@ interface ArticleWithBearing extends WikiArticle {
 class SpectralEngine {
   private generator: any = null;
   private isLoading = false;
-  private modelId = 'Xenova/OpenELM-270M-Instruct';
+  private modelId = 'Xenova/Phi-3-mini-4k-instruct';
 
   async init(onProgress?: (progress: number) => void) {
     if (this.generator || this.isLoading) return;
