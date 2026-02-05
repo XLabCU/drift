@@ -1,21 +1,19 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GoogleGenAI } from "@google/genai";
-import { DriftState, WikiArticle, GeoPoint, DriftEntry } from './types';
-import { DRIFT_RADIUS_METERS } from './constants';
-import { fetchNearbyArticles } from './services/WikipediaService';
-import { spectralEngine } from './services/SpectralEngine';
-import { audioEngine } from './services/AudioEngine';
-import { generateId } from './utils';
-import Radar from './components/Radar';
-import Log from './components/Log';
-
-// Required platform initialization for Google GenAI SDK compliance
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+import { DriftState, WikiArticle, GeoPoint, DriftEntry } from './types.ts';
+import { DRIFT_RADIUS_METERS } from './constants.ts';
+import { fetchNearbyArticles } from './services/WikipediaService.ts';
+import { spectralEngine } from './services/SpectralEngine.ts';
+import { audioEngine } from './services/AudioEngine.ts';
+import { generateId } from './utils.ts';
+import Radar from './components/Radar.tsx';
+import Log from './components/Log.tsx';
 
 const App: React.FC = () => {
   const [state, setState] = useState<DriftState>(DriftState.IDLE);
   const [coords, setCoords] = useState<GeoPoint | null>(null);
+  const [heading, setHeading] = useState<number>(0);
   const [articles, setArticles] = useState<WikiArticle[]>([]);
   const [log, setLog] = useState<DriftEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -25,40 +23,60 @@ const App: React.FC = () => {
   const lastDriftCoords = useRef<GeoPoint | null>(null);
   const isGeneratingRef = useRef(false);
 
-  // Distance threshold to trigger new drift (roughly 15 meters)
   const DRIFT_THRESHOLD_METERS = 0.00015;
+
+  const requestOrientationPermission = async () => {
+    // For iOS 13+ devices
+    if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+      try {
+        const permissionState = await (DeviceOrientationEvent as any).requestPermission();
+        return permissionState === 'granted';
+      } catch (e) {
+        console.error("Orientation permission denied", e);
+        return false;
+      }
+    }
+    return true; // Non-iOS or older devices
+  };
 
   const startEngine = async () => {
     setState(DriftState.INITIALIZING);
     setError(null);
 
-    // 1. Immediately request geolocation to trigger browser prompt
+    const hasOrientation = await requestOrientationPermission();
+    
     if ("geolocation" in navigator) {
       navigator.geolocation.watchPosition(
         (pos) => {
           const newCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setCoords(newCoords);
-          console.log("Anchor established at:", newCoords);
         },
         (err) => {
-          console.error("Geolocation error:", err);
-          setError(`Dimensional Anchor Failed: ${err.message}. Please enable location permissions.`);
+          setError(`Dimensional anchoring failed: ${err.message}`);
           setState(DriftState.ERROR);
         },
-        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
       );
     } else {
-      setError("Geospatial sensors are absent in this vessel.");
+      setError("Geospatial sensors unavailable on this hardware.");
       setState(DriftState.ERROR);
       return;
     }
 
+    // Orientation handling
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      if (e.alpha !== null) {
+        const compassHeading = (e as any).webkitCompassHeading || (360 - e.alpha);
+        setHeading(compassHeading);
+      }
+    };
+    window.addEventListener('deviceorientation', handleOrientation);
+
     try {
-      // 2. Initialize Audio and Model concurrently
       await audioEngine.init();
       await spectralEngine.init((p) => setLoadProgress(p));
     } catch (e: any) {
-      setError(`Spectral Core Failure: ${e.message}`);
+      setError(`Core Initialization Failure: ${e.message}`);
       setState(DriftState.ERROR);
     }
   };
@@ -84,15 +102,13 @@ const App: React.FC = () => {
           text: whisperText,
           coords: currentCoords,
           anchors: nearby.slice(0, 3).map(a => a.title),
-          voice: "Local-Spectral"
+          voice: "Spectral-Flash"
         };
 
         setLog(prev => [newEntry, ...prev]);
         await audioEngine.speak(whisperText);
         
         setTimeout(() => setIsTransmitting(false), 5000);
-      } else {
-        console.log("No anchors found in current sector.");
       }
     } catch (err) {
       console.error("Drift collapse:", err);
@@ -103,7 +119,6 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // Wait for both model (100%) and coords to be ready
     if (state === DriftState.INITIALIZING && loadProgress >= 100 && coords) {
       setState(DriftState.SCANNING);
       performDrift(coords);
@@ -130,67 +145,72 @@ const App: React.FC = () => {
   }, [coords, state, loadProgress, performDrift]);
 
   return (
-    <div className={`h-screen w-full flex flex-col md:flex-row bg-[#050505] text-[#d1d1d1] transition-all duration-700 ${isTransmitting ? 'bg-[#0a0505]' : ''}`}>
-      <div className={`w-full md:w-1/2 flex flex-col items-center justify-center p-8 border-b md:border-b-0 md:border-r border-green-900/20 bg-black/40 relative overflow-hidden`}>
+    <div className={`h-screen w-full flex flex-col md:flex-row bg-[#050505] text-[#d1d1d1] transition-all duration-1000 ${isTransmitting ? 'bg-[#1a0a0a]' : ''}`}>
+      <div className={`w-full md:w-1/2 flex flex-col items-center justify-center p-8 border-b md:border-b-0 md:border-r border-green-900/20 bg-black/50 relative overflow-hidden`}>
         
         {isTransmitting && (
-          <div className="absolute inset-0 z-50 pointer-events-none bg-green-500/5 animate-pulse flex flex-col items-center justify-center gap-4">
-             <div className="text-green-500 font-mono text-xl tracking-[0.8em] uppercase animate-ping">Interception</div>
-             <div className="text-[10px] font-mono text-green-500/50">LOCAL_MODEL_INFERENCE_ACTIVE</div>
+          <div className="absolute inset-0 z-50 pointer-events-none bg-red-500/10 animate-pulse flex flex-col items-center justify-center gap-4">
+             <div className="text-red-500 font-mono text-3xl tracking-[1em] uppercase animate-ping blur-[1px]">Receiving</div>
+             <div className="text-[10px] font-mono text-red-500/80 font-bold uppercase tracking-[0.5em]">Inter-Dimensional Uplink</div>
           </div>
         )}
 
-        <div className="absolute top-4 left-4 font-mono text-[10px] text-green-500/30 flex flex-col gap-1">
-          <div>DRIFT_ON_DEVICE_v5.2</div>
-          <div>MODEL: OPENELM-270M</div>
-          <div>GPS: {coords ? 'LOCKED' : 'SEARCHING...'}</div>
-          <div>ANCHORS: {articles.length}</div>
+        <div className="absolute top-6 left-6 font-mono text-[10px] text-green-500/40 flex flex-col gap-2 uppercase tracking-widest">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${coords ? 'bg-green-500 shadow-[0_0_8px_green]' : 'bg-red-900 animate-pulse'}`} />
+            <span>Signal: {coords ? 'LOCKED' : 'SEARCHING...'}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${loadProgress >= 100 ? 'bg-green-500' : 'bg-yellow-600 animate-pulse'}`} />
+            <span>Matrix: {loadProgress >= 100 ? 'ACTIVE' : `SYNCING ${loadProgress}%`}</span>
+          </div>
         </div>
 
-        <h1 className="text-4xl font-['Special_Elite'] text-green-500 mb-8 tracking-[0.2em] uppercase drop-shadow-[0_0_15px_rgba(0,255,65,0.3)]">Drift</h1>
+        <h1 className="text-5xl font-['Special_Elite'] text-green-500 mb-12 tracking-[0.3em] uppercase drop-shadow-[0_0_20px_rgba(0,255,65,0.3)]">Drift</h1>
 
         {state === DriftState.IDLE ? (
-          <div className="text-center space-y-6">
-            <p className="max-w-xs text-sm opacity-40 leading-relaxed italic font-serif">
-              "The latent space is not empty. It is a crowded silence waiting for a navigator."
+          <div className="text-center space-y-10 animate-in fade-in zoom-in duration-1000">
+            <p className="max-w-xs mx-auto text-sm opacity-50 leading-relaxed italic font-serif">
+              "The silence between locations is where the ghosts of knowledge reside. Turn the dial, and listen."
             </p>
             <button
               onClick={startEngine}
-              className="px-10 py-4 border border-green-500/50 text-green-500 hover:bg-green-500/10 transition-all duration-500 font-mono tracking-widest uppercase text-xs"
+              className="group relative px-10 py-5 overflow-hidden border border-green-500/50 text-green-500 hover:bg-green-500 hover:text-black transition-all duration-700 font-mono tracking-[0.4em] uppercase text-xs"
             >
-              Wake Spectral Core
+              <span className="relative z-10">Wake Spectral Core</span>
+              <div className="absolute inset-0 bg-green-500 transform translate-y-full group-hover:translate-y-0 transition-transform duration-500"></div>
             </button>
           </div>
         ) : state === DriftState.INITIALIZING ? (
-          <div className="w-64 space-y-4">
-             <div className="flex justify-between font-mono text-[10px] text-green-500/60 uppercase">
-                <span>{loadProgress < 100 ? "Loading Core..." : (!coords ? "Awaiting Signal..." : "Syncing...")}</span>
-                <span>{Math.min(loadProgress, 100)}%</span>
+          <div className="w-64 space-y-6">
+             <div className="flex justify-between font-mono text-[10px] text-green-500/80 uppercase tracking-widest">
+                <span>Stabilizing Neural Lattice</span>
+                <span>{loadProgress}%</span>
              </div>
-             <div className="h-1 w-full bg-green-900/20 relative overflow-hidden">
+             <div className="h-1 w-full bg-green-950/40 border border-green-500/10 rounded-full relative overflow-hidden">
                 <div 
-                  className="h-full bg-green-500 transition-all duration-300 shadow-[0_0_8px_rgba(0,255,65,0.8)]" 
-                  style={{ width: `${Math.min(loadProgress, 100)}%` }}
+                  className="h-full bg-green-500 transition-all duration-500 shadow-[0_0_15px_rgba(0,255,65,0.8)]" 
+                  style={{ width: `${loadProgress}%` }}
                 />
              </div>
-             <p className="text-[9px] text-center font-serif italic opacity-30 leading-tight">
-               {!coords ? "Please allow location access to anchor the radar..." : "Stabilizing aethereal blueprints..."}
+             <p className="text-[10px] text-center font-serif italic opacity-30 tracking-wide">
+               Ensuring correct calibration of spatial sensors and spectral relays.
              </p>
           </div>
         ) : (
-          <div className={`w-full space-y-12 transition-all duration-500 ${isTransmitting ? 'scale-105 blur-[0.5px]' : 'scale-100'}`}>
-            <Radar userCoords={coords || { lat: 0, lng: 0 }} articles={articles} radius={DRIFT_RADIUS_METERS} />
+          <div className={`w-full space-y-12 transition-all duration-1000 ${isTransmitting ? 'scale-105' : 'scale-100'}`}>
+            <Radar userCoords={coords || { lat: 0, lng: 0 }} articles={articles} radius={DRIFT_RADIUS_METERS} heading={heading} />
             
-            <div className="text-center">
-              <div className="text-[10px] font-mono uppercase tracking-[0.4em] mb-3 text-green-500/50">
-                {isTransmitting ? "Interpreting Echo..." : (state === DriftState.DRIFTING ? "Decoding Gaps..." : (coords ? "Monitoring Sector..." : "Signal Lost..."))}
+            <div className="text-center space-y-6">
+              <div className="text-[11px] font-mono uppercase tracking-[0.6em] text-green-500/70 animate-pulse">
+                {isTransmitting ? "INTERCEPTING ECHO..." : "WATCHING THE VOID"}
               </div>
-              <div className="flex justify-center gap-1.5 h-4 items-center">
+              <div className="flex justify-center gap-3 h-8 items-center">
                 {[...Array(8)].map((_, i) => (
                   <div 
                     key={i} 
-                    className={`w-3 h-0.5 transition-all duration-500 ${state === DriftState.DRIFTING || isTransmitting ? "bg-green-500 shadow-[0_0_5px_rgba(0,255,65,1)]" : "bg-green-900/30"}`} 
-                    style={{animation: (state === DriftState.DRIFTING || isTransmitting) ? `pulse-bar 1.2s infinite ${i * 0.15}s` : 'none'}} 
+                    className={`w-3 h-1 transition-all duration-300 ${isTransmitting ? "bg-red-500 shadow-[0_0_10px_red]" : "bg-green-900/30"}`} 
+                    style={{animation: isTransmitting ? `vibe 1s infinite ${i * 0.1}s` : 'none'}} 
                   />
                 ))}
               </div>
@@ -199,22 +219,22 @@ const App: React.FC = () => {
         )}
 
         {error && (
-          <div className="mt-8 p-6 bg-red-950/20 border border-red-900/40 text-red-500 text-[10px] font-mono text-center uppercase tracking-widest leading-relaxed max-w-xs">
+          <div className="mt-10 p-6 bg-red-950/20 border border-red-900/40 text-red-500 text-[10px] font-mono text-center uppercase tracking-[0.2em] leading-relaxed max-w-sm">
             {error}
-            <button onClick={() => window.location.reload()} className="block mt-4 mx-auto underline opacity-60 hover:opacity-100">Restart Core</button>
+            <button onClick={() => window.location.reload()} className="block mt-6 mx-auto border border-red-500/40 px-4 py-2 hover:bg-red-500/10 transition-all font-bold">REBOOT CORE</button>
           </div>
         )}
       </div>
 
-      <div className="w-full md:w-1/2 flex flex-col bg-[#070707] relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(0,255,65,0.02)_0%,transparent_70%)] pointer-events-none" />
+      <div className="w-full md:w-1/2 flex flex-col bg-[#070707] relative overflow-hidden border-t md:border-t-0 border-green-900/10">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,rgba(0,255,65,0.02)_0%,transparent_50%)] pointer-events-none" />
         <Log entries={log} />
       </div>
 
       <style>{`
-        @keyframes pulse-bar {
+        @keyframes vibe {
           0%, 100% { height: 2px; opacity: 0.3; }
-          50% { height: 12px; opacity: 1; }
+          50% { height: 24px; opacity: 1; }
         }
       `}</style>
     </div>

@@ -1,75 +1,47 @@
-import { pipeline, env } from '@huggingface/transformers';
-import { WikiArticle, GeoPoint } from '../types';
 
-// Environment setup for browser-side HuggingFace Transformers
-env.allowLocalModels = false;
-env.useBrowserCache = true;
+import { GoogleGenAI } from "@google/genai";
+import { WikiArticle, GeoPoint } from '../types.ts';
 
 class SpectralEngine {
-  private generator: any = null;
+  private ai: GoogleGenAI | null = null;
 
   async init(onProgress?: (progress: number) => void) {
-    if (this.generator) {
-      if (onProgress) onProgress(100);
-      return;
-    }
-
-    try {
-      console.log("SpectralEngine: Initializing Core...");
-      this.generator = await pipeline('text-generation', 'Xenova/OpenELM-270M-Instruct', {
-        progress_callback: (data: any) => {
-          if (data.status === 'progress' && onProgress) {
-            // Transformers.js v3 provides progress as 0 to 1
-            // We ensure we don't multiply if it's already over 1 (just in case)
-            const p = data.progress > 1 ? data.progress : data.progress * 100;
-            onProgress(Math.min(Math.round(p), 100));
-          }
-          if (data.status === 'done' && onProgress) {
-            onProgress(100);
-          }
-        }
-      });
-      console.log("SpectralEngine: Core stabilized.");
-    } catch (error) {
-      console.error("SpectralEngine: Core failure:", error);
-      throw error;
-    }
+    if (onProgress) onProgress(100);
+    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
   async generateWhisper(articles: WikiArticle[], coords: GeoPoint): Promise<string> {
-    if (!this.generator) {
-      return "The aethereal core is dormant.";
+    if (!this.ai) {
+      this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     }
 
     const anchors = articles.length > 0 
-      ? articles.sort(() => 0.5 - Math.random()).slice(0, 2).map(a => a.title)
-      : ["the void", "the empty silence"];
+      ? articles.sort(() => 0.5 - Math.random()).slice(0, 3).map(a => a.title)
+      : ["the featureless void", "the silent gaps between coordinates"];
 
-    const prompt = `Location: ${anchors.join(' and ')}. Coords: ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}. Write a spooky, very short sentence about a parallel dimension here.`;
-    const formattedPrompt = `<user>\n${prompt}\n<assistant>\n`;
+    const prompt = `You are a sensor translating spectral echoes from a parallel dimension tied to physical geography.
+The current anchors are: ${anchors.join(', ')}.
+Location: ${coords.lat.toFixed(4)}N, ${coords.lng.toFixed(4)}E.
+
+Generate a single, short, haunting sentence (under 15 words) about what is "drifting" in the latent space at this specific location. 
+Incorporate the anchors cryptically. Do not use conversational filler. Be eldritch, poetic, and mysterious.`;
 
     try {
-      const output = await this.generator(formattedPrompt, {
-        max_new_tokens: 35,
-        temperature: 0.85,
-        do_sample: true,
-        top_k: 40,
-        repetition_penalty: 1.2
+      const response = await this.ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: prompt,
+        config: {
+          temperature: 0.9,
+          topP: 0.95,
+          topK: 40,
+          maxOutputTokens: 60,
+        },
       });
 
-      let text = output[0].generated_text;
-      
-      if (text.includes('<assistant>')) {
-        text = text.split('<assistant>')[1].trim();
-      } else {
-        text = text.replace(formattedPrompt, '').trim();
-      }
-
-      const finalized = text.split(/[.!?\n]/)[0].replace(/[<>]/g, '').trim();
-      return finalized ? finalized + "." : "A presence lingers here, unanchored and cold.";
+      return response.text?.trim() || "A presence lingers here, unanchored and cold.";
     } catch (error) {
-      console.error("SpectralEngine: Inference error:", error);
-      return "Spectral static obscures the signal.";
+      console.error("SpectralEngine: API Error:", error);
+      return "Spectral static obscures the signal. The void remains silent.";
     }
   }
 }
