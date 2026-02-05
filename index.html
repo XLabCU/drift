@@ -5,7 +5,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Drift - Spectral Geolocation</title>
-    <base href="./">
+    <!-- Set base to the subfolder for GitHub Pages deployment -->
+    <base href="/drift/">
+    <script>
+      // Global variable for application use
+      window.BASE_PATH = 'https://xlabcu.github.io/drift';
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,700;1,400&family=Special+Elite&display=swap" rel="stylesheet">
     <style>
@@ -75,15 +80,13 @@
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
 </head>
 <body>
     <div id="root"></div>
     <div class="crt-overlay"></div>
     <div class="noise-overlay"></div>
     <div class="scanline"></div>
-    <!-- Entry Point -->
+    <!-- Entry Point - resolves relative to base href -->
     <script type="module" src="./index.tsx"></script>
-<script type="module" src="./index.tsx"></script>
 </body>
 </html>
