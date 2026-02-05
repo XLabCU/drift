@@ -1,0 +1,1 @@
+// Drift now uses on-device LLM via SpectralEngine.ts to ensure complete local processing.

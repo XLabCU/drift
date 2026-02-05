@@ -1,0 +1,7 @@
+{
+  "name": "Drift",
+  "description": "An eldritch radar for exploring the latent space between physical locations. Discover phantom whispers from Wikipedia-anchored geocoordinates in a parallel Lovecraftian dimension.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
