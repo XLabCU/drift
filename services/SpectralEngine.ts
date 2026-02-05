@@ -1,4 +1,4 @@
-import { pipeline, env } from '@huggingface/transformers';
+import { pipeline, env, TextStreamer } from '@huggingface/transformers';
 import { WikiArticle, GeoPoint } from '../types.ts';
 
 // Configure Transformers.js for browser environment
@@ -8,7 +8,7 @@ env.useBrowserCache = true;
 interface ArticleWithBearing extends WikiArticle {
   distance: number;
   bearing: number;
-  bearingDelta: number; // How far off the user's heading
+  bearingDelta: number;
 }
 
 class SpectralEngine {
@@ -41,9 +41,6 @@ class SpectralEngine {
     }
   }
 
-  /**
-   * Calculate bearing from point A to point B in degrees (0-360)
-   */
   private calculateBearing(from: GeoPoint, to: GeoPoint): number {
     const lat1 = (from.lat * Math.PI) / 180;
     const lat2 = (to.lat * Math.PI) / 180;
@@ -57,11 +54,8 @@ class SpectralEngine {
     return (bearing + 360) % 360;
   }
 
-  /**
-   * Calculate distance between two points in meters (Haversine)
-   */
   private calculateDistance(from: GeoPoint, to: GeoPoint): number {
-    const R = 6371000; // Earth's radius in meters
+    const R = 6371000;
     const lat1 = (from.lat * Math.PI) / 180;
     const lat2 = (to.lat * Math.PI) / 180;
     const dLat = lat2 - lat1;
@@ -74,21 +68,11 @@ class SpectralEngine {
     return R * c;
   }
 
-  /**
-   * Calculate smallest angle difference between two bearings
-   */
   private bearingDelta(bearing1: number, bearing2: number): number {
     let delta = Math.abs(bearing1 - bearing2);
     return delta > 180 ? 360 - delta : delta;
   }
 
-  /**
-   * Find the two closest articles along the user's heading
-   * @param articles - Available articles with coordinates
-   * @param userPos - User's current position
-   * @param heading - User's heading in degrees (0 = North, 90 = East)
-   * @param coneAngle - How wide the "ahead" cone is (default 60° each side)
-   */
   private findArticlesAlongHeading(
     articles: WikiArticle[],
     userPos: GeoPoint,
@@ -103,41 +87,33 @@ class SpectralEngine {
         const distance = this.calculateDistance(userPos, articlePos);
         const bearingDelta = this.bearingDelta(heading, bearing);
 
-        return {
-          ...article,
-          distance,
-          bearing,
-          bearingDelta,
-        };
+        return { ...article, distance, bearing, bearingDelta };
       })
-      // Filter to only articles within the cone ahead
       .filter(a => a.bearingDelta <= coneAngle)
-      // Sort by distance (closest first)
       .sort((a, b) => a.distance - b.distance);
 
-    // Return the two closest along heading
     return articlesWithBearing.slice(0, 2);
   }
 
-  /**
-   * Extract a meaningful snippet from article content
-   */
   private extractSnippet(article: WikiArticle, maxLength: number = 80): string {
     const text = article.extract || article.title;
-    
-    // Take first sentence or truncate
     const firstSentence = text.split(/[.!?]/)[0];
     if (firstSentence.length <= maxLength) {
       return firstSentence.trim();
     }
-    
     return text.slice(0, maxLength).trim() + '…';
   }
 
-  async generateWhisper(
+  /**
+   * Stream a whisper token by token
+   * @param onToken - Called with each new token and the accumulated text
+   * @returns Promise that resolves with the final complete text
+   */
+  async generateWhisperStreaming(
     articles: WikiArticle[], 
     coords: GeoPoint,
-    heading?: number // User's heading in degrees
+    onToken: (token: string, accumulated: string) => void,
+    heading?: number
   ): Promise<string> {
     if (!this.generator) {
       throw new Error("Spectral core not initialized. Call init() first.");
@@ -146,30 +122,24 @@ class SpectralEngine {
     let selectedArticles: WikiArticle[];
     
     if (heading !== undefined && articles.length >= 2) {
-      // Find articles along heading
       selectedArticles = this.findArticlesAlongHeading(articles, coords, heading);
-      
-      // Fall back to random if we don't have 2 along heading
       if (selectedArticles.length < 2) {
-        selectedArticles = articles
-          .sort(() => 0.5 - Math.random())
-          .slice(0, 2);
+        selectedArticles = articles.sort(() => 0.5 - Math.random()).slice(0, 2);
       }
     } else {
-      // No heading data - use random selection
-      selectedArticles = articles
-        .sort(() => 0.5 - Math.random())
-        .slice(0, 2);
+      selectedArticles = articles.sort(() => 0.5 - Math.random()).slice(0, 2);
     }
 
-    // Handle edge cases
     if (selectedArticles.length === 0) {
-      return "The void hums with absent histories.";
+      const fallback = "The void hums with absent histories.";
+      onToken(fallback, fallback);
+      return fallback;
     }
     
     if (selectedArticles.length === 1) {
-      const snippet = this.extractSnippet(selectedArticles[0]);
-      return `Echoes of ${selectedArticles[0].title} dissolve into static.`;
+      const fallback = `Echoes of ${selectedArticles[0].title} dissolve into static.`;
+      onToken(fallback, fallback);
+      return fallback;
     }
 
     const [article1, article2] = selectedArticles;
@@ -189,32 +159,55 @@ Task: These two fragments combine in your fever dreams, a message from an eldrit
 <|assistant|>
 `;
 
+    let accumulated = '';
+
     try {
-      const result = await this.generator(prompt, {
+      // Create a custom streamer
+      const streamer = new TextStreamer(this.generator.tokenizer, {
+        skip_prompt: true,
+        skip_special_tokens: true,
+        callback_function: (token: string) => {
+          // Stop at newlines or sentence endings for cleaner output
+          if (token.includes('\n')) {
+            return; // Don't add newlines
+          }
+          accumulated += token;
+          onToken(token, accumulated);
+        },
+      });
+
+      await this.generator(prompt, {
         max_new_tokens: 40,
         temperature: 0.9,
         top_p: 0.92,
         do_sample: true,
         return_full_text: false,
+        streamer,
       });
 
-      let text = '';
-      if (Array.isArray(result) && result.length > 0) {
-        text = result[0].generated_text || '';
-      }
-
-      // Clean up: take first sentence, remove artifacts
-      const cleaned = text
+      // Clean up final result
+      const cleaned = accumulated
         .split('\n')[0]
         .split(/[.!?]/)[0]
-        .replace(/<[^>]*>/g, '') // Remove any HTML-like tags
+        .replace(/<[^>]*>/g, '')
         .trim();
 
       return cleaned || `Where ${article1.title} fades, ${article2.title} begins to whisper.`;
     } catch (error) {
       console.error("[SpectralEngine] Generation error:", error);
-      return `${article1.title} and ${article2.title} drift through spectral static.`;
+      const fallback = `${article1.title} and ${article2.title} drift through spectral static.`;
+      onToken(fallback, fallback);
+      return fallback;
     }
+  }
+
+  // Keep non-streaming version for backwards compatibility
+  async generateWhisper(
+    articles: WikiArticle[], 
+    coords: GeoPoint,
+    heading?: number
+  ): Promise<string> {
+    return this.generateWhisperStreaming(articles, coords, () => {}, heading);
   }
 }
 
